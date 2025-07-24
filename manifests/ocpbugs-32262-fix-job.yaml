@@ -342,18 +342,27 @@ spec:
                           for item in "${reinstall[@]}"; do
                               IFS=' ' read -r namespace name < <(echo "${item}")
                               echo -e "${namespace} ${name}"
+
+                              #### Insert custom recovery logic here ####
+
                               if [[ "$name" == "openshift-gitops-operator" ]]; then
+                                # Find current CSV from subscription and store in manifest
+                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
+                                cp /tmp/gitops-subscription.yaml /work/gitops-subscription.yaml
+                                sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/gitops-subscription.yaml
                                 oc delete csv -n openshift-operators -l olm.copiedFrom=openshift-gitops-operator --dry-run=client
                                 oc delete sub -n ${namespace} ${name} --dry-run=client
-                                oc apply -f /tmp/gitops-subscription.yaml --dry-run=client
+                                oc apply -f /work/gitops-subscription.yaml --dry-run=client
                               elif [[ "$name" == "portworx-certified" ]]; then
+                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
+                                cp /tmp/portworx-subscription.yaml /work/portworx-subscription.yaml
+                                sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/portworx-subscription.yaml
                                 oc delete csv -n openshift-operators -l operators.coreos.com/portworx-certified.openshift-operators="" --dry-run=client
                                 oc delete sub -n ${namespace} ${name} --dry-run=client
                                 oc apply -f /tmp/portworx-subscription.yaml --dry-run=client
                               elif [[ "$name" == "kubevirt-hyperconverged" ]]; then
                                 oc delete csv -n openshift-cnv -l operators.coreos.com/kubevirt-hyperconverged.openshift-cnv="" --dry-run=client
-                                oc delete sub -n ${namespace} ${name} --dry-run=client
-                                oc apply -f /tmp/kubevirt-subscription.yaml --dry-run=client
+                                # We didn't need to delete the subscription from OpenShift Virt to recover so we skipped it
                               else
                                 ### TODO: You can customize this section and delete additional csvs and subscriptions as needed; for now we'll skip others
                                 echo -e "Skip deleting ${name} in ${namespace} namespace - TODO: you can update this script to delete this CSV and subscription"
@@ -386,18 +395,21 @@ spec:
                   fi
               }
 
+              # Check for bug condition on a loop
               while true; do echo `date`; main; sleep 60; done;
           volumeMounts:
-            - name: subscriptions
-              mountPath: /tmp/kubevirt-subscription.yaml
-              subPath: kubevirt-subscription.yaml
             - name: subscriptions
               mountPath: /tmp/gitops-subscription.yaml
               subPath: gitops-subscription.yaml
             - name: subscriptions
               mountPath: /tmp/portworx-subscription.yaml
               subPath: portworx-subscription.yaml
+            - name: work-dir
+              mountPath: /work
       volumes:
         - name: subscriptions
           configMap:
             name: subscriptions
+        - name: work-dir
+          emptyDir:
+            sizeLimit: 100Mi
