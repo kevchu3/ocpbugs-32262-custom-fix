@@ -1,0 +1,403 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ocpbugs-32262-fix
+  namespace: ocpbugs-32262-fix
+spec:
+  template:
+    metadata:
+      name: ocpbugs-32262-fix
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: ocpbugs-32262-fix
+      containers:
+        - name: ocpbugs-32262-fix
+          image: registry.redhat.io/openshift4/ose-tools-rhel9:v4.18
+          command:
+            - /bin/bash
+            - -c
+            - |
+              #!/usr/bin/env bash
+
+              ERROR_COLOR="\e[31m"
+              HEADER_COLOR="\e[97m"
+              HIGHLIGHT_COLOR="\e[92m"
+
+              logo() {
+                  echo -e "\e[31m"
+                  echo -e "                                   88 88                              "
+                  echo -e "                                   88 88                       ,d     "
+                  echo -e "                                   88 88                       88     "
+                  echo -e "    8b,dPPYba,  ,adPPYba,  ,adPPYb,88 88,dPPYba,  ,adPPYYba, MM88MMM  "
+                  echo -e "    88P'   \"Y8 a8P_____88 a8\"    \`Y88 88P'    \"8a \"\"     \`Y8   88     "
+                  echo -e "    88         8PP\"\"\"\"\"\"\" 8b       88 88       88 ,adPPPPP88   88     "
+                  echo -e "    88         \"8b,   ,aa \"8a,   ,d88 88       88 88,    ,88   88,    "
+                  echo -e "    88          \`\"Ybbd8\"'  \`\"8bbdP\"Y8 88       88 \`\"8bbdP\"Y8   \"Y888  "
+                  echo -e "\e[0m"
+              }
+
+              log() {
+                  local color_code=$1
+                  shift
+                  local newline=true
+                  if [[ "$1" == "-n" ]]; then
+                      newline=false
+                      shift
+                  fi
+                  local message="$@"
+                  if $newline; then
+                      echo -e "${color_code}${message}\e[0m"
+                  else
+                      echo -ne "${color_code}${message}\e[0m"
+                  fi
+              }
+
+              header_text() {
+                  log "${HEADER_COLOR}" "$@"
+              }
+
+              highlight() {
+                  log "${HIGHLIGHT_COLOR}" "$@"
+              }
+
+              alert() {
+                  log "${ERROR_COLOR}" "$@"
+              }
+
+              # Ensure the following commands are available
+              required_commands=("oc" "jq")
+              check_for_commands() {
+                  for cmd in ${required_commands[@]}; do
+                      if ! command -v ${cmd} >&/dev/null; then
+                          alert "ERROR: Cannot find '${cmd}' in path"
+                          exit 1
+                      fi
+                  done
+              }
+
+              has_414_resource_names() {
+                  local namespace=$1
+                  local installplan_name=$2
+
+                  # Fetch the InstallPlan JSON data
+                  json_data=$(oc get installplan -n "$namespace" "$installplan_name" -o json)
+                  if [[ $? -ne 0 ]]; then
+                      echo "Error fetching InstallPlan data"
+                      return 1
+                  fi
+
+                  # Process the JSON data with jq
+                  while read -r plan; do
+                      resolving=$(echo "$plan" | jq -r '.resolving')
+                      resource_name=$(echo "$plan" | jq -r '.resourceName')
+
+                      # Cap the length of the resolving variable to 54 characters
+                      resolving_capped="${resolving:0:54}"
+                      regex="^${resolving_capped}(-.*)?-[a-f0-9]+$"
+                      if [[ "$resource_name" =~ $regex ]]; then
+                          return 0
+                      fi
+                  done < <(echo "$json_data" | jq -c '.status.plan[] | {resolving, resourceName: .resource.name}')
+                  return 1
+              }
+
+              usage() {
+                  logo
+                  highlight "  Helper script for bug https://issues.redhat.com/browse/OCPBUGS-32262"
+                  highlight "  --------------------------------------------------------------------"
+                  echo ""
+                  echo "  Usage: $0 [-h] [-p] [-g]"
+                  echo "  Options:"
+                  echo "    -h            Show this help message and exit"
+                  echo "    -p            Probe cluster for problematic resources"
+                  echo "    -o            List orphans"
+                  echo "    -r            List Subscriptions for Operators that need reinstall"
+                  echo "    -u            List Subscriptions referencing an unapproved 4.14 InstallPlan"
+                  echo "    -g            Generate patch script for Subscriptions with an unapproved 4.14 InstallPlan"
+                  echo ""
+
+              }
+
+              OLM_NAMESPACE="openshift-operator-lifecycle-manager"
+
+              main() {
+                  local option=''
+
+                  if [[ $# -eq 0 ]]; then
+                      usage
+                      exit 1
+                  fi
+
+                  # Parse command-line arguments
+                  while getopts ":hpgoru" opt; do
+                      case ${opt} in
+                      h)
+                          usage
+                          exit 0
+                          ;;
+                      o)
+                          option='o'
+                          ;;
+                      r)
+                          option='r'
+                          ;;
+                      u)
+                          option='u'
+                          ;;
+                      p)
+                          option='p'
+                          ;;
+                      g)
+                          option='g'
+                          ;;
+                      \?)
+                          echo "Invalid option: -$OPTARG" >&2
+                          usage
+                          exit 1
+                          ;;
+                      esac
+                  done
+
+                  check_for_commands
+
+                  # # determine OLM namespace
+                  # if ! oc get namespace "${OLM_NAMESPACE}" >/dev/null 2>&1; then
+                  #     OLM_NAMESPACE="olm"
+                  # fi
+
+                  # # determine number of cluster version operator instances
+                  # cvo_replicas=0
+                  # if [[ "$(oc get deployment -n openshift-cluster-version cluster-version-operator --ignore-not-found)" != '' ]]; then
+                  #     cvo_replicas="$(oc get deployment -n openshift-cluster-version cluster-version-operator -o jsonpath='{.spec.replicas}')"
+                  #     if [[ "$cvo_replicas" == '' ]]; then
+                  #         alert "ERROR: unable to determine number of current replicas for the cluster-version-operator deployment"
+                  #         return 1
+                  #     fi
+                  # fi
+
+                  # olm_operator_replicas="$(oc get deployment -n $OLM_NAMESPACE olm-operator -o jsonpath='{.spec.replicas}')"
+                  # catalog_operator_replicas="$(oc get deployment -n $OLM_NAMESPACE catalog-operator -o jsonpath='{.spec.replicas}')"
+
+                  # if [[ "$olm_operator_replicas" == '' || "$catalog_operator_replicas" == '' ]]; then
+                  #     alert "ERROR: unable to determine number of current replicas for olm ($olm_operator_replicas) and/or catalog operator ($catalog_operator_replicas)"
+                  #     return 1
+                  # fi
+
+                  # grab all InstallPlan(s)
+                  readarray -t installplans < <(oc get installplans --all-namespaces --no-headers -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.spec.approval}{" "}{.spec.approved}{"\n"}{end}')
+
+                  declare -a reinstall=()
+                  declare -a patch=()
+                  declare -a orphan=()
+                  for installplan in "${installplans[@]}"; do
+                      IFS=' ' read -r namespace installplan_name approval_mode approved < <(echo "${installplan}")
+
+                      # ignore non-automatic approval mode InstallPlans
+                      if [[ "$approval_mode" != 'Manual' ]]; then
+                          continue
+                      fi
+
+                      # ignore installplans without steps that include 4.14 style resource names
+                      if ! has_414_resource_names "${namespace}" "${installplan_name}"; then
+                          continue
+                      fi
+
+                      # ignore installplans that have completed already
+                      ip_phase="$(oc get installplan -n ${namespace} ${installplan_name} -o jsonpath='{.status.phase}')"
+                      if [[ "${ip_phase}" == 'Complete' ]]; then
+                          continue
+                      fi
+
+                      # get InstallPlan subscriptions and check for orphan status and affected subscriptions
+                      readarray -t subscription_names < <(oc get installplan -n "$namespace" "$installplan_name" -o jsonpath='{range .metadata.ownerReferences[?(@.kind=="Subscription")]}{.name}{"\n"}{end}')
+                      for i in "${!subscription_names[@]}"; do
+                          subscription_name="${subscription_names[i]}"
+                          installplan_ref="$(oc get subscription -n "${namespace}" "${subscription_name}" --ignore-not-found -o jsonpath='{.status.installPlanRef.name}')"
+                          if [[ "${installplan_ref}" != "${installplan_name}" ]]; then
+                              unset subscription_names[$i]
+                          fi
+                          installplan_message="$(oc get installplan -n "$namespace" "$installplan_name" -o jsonpath='{.status.message}')"
+                          if [[ "${approved}" == 'true' && "$installplan_message" =~ "couldn't find unpacked step" ]]; then
+                              if [[ ! "${reinstall[@]}" =~ "${namespace} ${subscription_name}" ]]; then
+                                  reinstall+=( "${namespace} ${subscription_name}" )
+                              fi
+                          fi
+                      done
+
+                      # if the install plan is unapproved and has no subscriptions referencing it, it is orphaned
+                      if [[ "${#subscription_names[@]}" == 0 && "${approved}" == 'false' ]]; then
+                          orphan+=("${namespace} ${installplan_name}")
+                          continue
+                      fi
+
+                      for subscription_name in "${subscription_names[@]}"; do
+                          if [[ ! "${patch[@]}" =~ "${namespace} ${installplan_name} ${subscription_name}" ]]; then
+                              patch+=("${namespace} ${installplan_name} ${subscription_name}")
+                          fi
+                      done
+                  done
+
+                  # Prune any reinstall identified Subscriptions out of patchable Subs
+                  for i in "${!patch[@]}"; do
+                      item="${patch[i]}"
+                      IFS=' ' read -r namespace ip name < <(echo "${item}")
+                      # Check if the value is in the array using pattern matching
+                      if [[ " ${reinstall[@]} " =~ "${namespace} ${name}" ]]; then
+                        unset patch[i]
+                      fi
+                  done
+
+                  if [[ "${option}" == 'g' ]]; then
+                      if [[ "${#patch[@]}" == 0 ]]; then
+                          # Error output should go to stderr
+                          echo -e >&2 "${HIGHLIGHT_COLOR}No Subscriptions referencing an unapproved 4.14 InstallPlan found\e[0m"
+                          exit 0
+                      fi
+                      echo ""
+                      echo "#!/usr/bin/env bash"
+                      echo ""
+                      if [[ "${cvo_replicas}" > 0 ]]; then
+                          echo "# Scaling down CVO"
+                          echo "oc scale --replicas=0 -n openshift-cluster-version deployment/cluster-version-operator"
+                          echo ""
+                      fi
+                      echo "# Scaling down OLM"
+                      echo "oc scale --replicas=0 -n $OLM_NAMESPACE deployment/olm-operator"
+                      echo "oc scale --replicas=0 -n $OLM_NAMESPACE deployment/catalog-operator"
+                      echo ""
+                      for item in "${patch[@]}"; do
+                          IFS=' ' read -r namespace installplan_name subscription_name < <(echo "${item}")
+                          echo "##############################################################################"
+                          echo "# Namespace: ${namespace}"
+                          echo "# InstallPlan ${installplan_name}"
+                          echo "# Parent Subscription: ${subscription_name}"
+                          echo "##############################################################################"
+                          echo ""
+                          echo "# Backing-up Subscription ${namespace}/${subscription_name}"
+                          subscription_file="sub_${namespace}_${subscription_name}.yaml"
+                          rm -fr ${subscription_file}
+                          echo "oc get subscription -n ${namespace} ${subscription_name} -o yaml > ${subscription_file}"
+                          installed_csv="$(oc get subscription -n ${namespace} ${subscription_name} -o jsonpath='{.status.installedCSV}')"
+                          timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+                          value="{\"installedCSV\": \"${installed_csv}\", \"currentCSV\": \"${installed_csv}\", \"lastUpdated\": \"${timestamp}\"}"
+                          echo "oc patch subscription -n ${namespace} ${subscription_name} --subresource='status' --type='json' -p='[{\"op\": \"replace\", \"path\": \"/status\", \"value\": ${value}}]'"
+                          echo ""
+                      done
+                      echo "# Scaling OLM back up"
+                      echo "oc scale --replicas=${olm_operator_replicas} -n ${OLM_NAMESPACE} deployment/olm-operator"
+                      echo "oc scale --replicas=${catalog_operator_replicas} -n ${OLM_NAMESPACE} deployment/catalog-operator"
+                      echo ""
+                      if [ "${cvo_replicas}" -gt 0 ]; then
+                          echo "# Scaling up CVO"
+                          echo "oc scale --replicas=${cvo_replicas} -n openshift-cluster-version deployment/cluster-version-operator"
+                          echo ""
+                      fi
+                      echo ""
+                      for item in "${patch[@]}"; do
+                          IFS=' ' read -r namespace installplan_name subscription_name < <(echo "${item}")
+                          echo "# Wait for Subscription to have an installplan reference"
+                          echo "timeout=120"
+                          echo "start_time=\$(date +%s)"
+                          echo "ipref=\"\$(oc get subscription -n ${namespace} ${subscription_name} -o jsonpath='{.status.installPlanRef.name}')\""
+                          echo "echo \"Waiting for ${namespace}/${subscription_name} to get new InstallPlan\""
+                          echo "until [[ \"\${ipref}\" != '' ]]; do"
+                          echo "    ipref=\"\$(oc get subscription -n ${namespace} ${subscription_name} -o jsonpath='{.status.installPlanRef.name}')\""
+                          echo "    current_time=\$(date +%s)"
+                          echo "    elapsed_time=\$((current_time - start_time))"
+                          echo "    if (( \"\${elapsed_time}\" >= \"\$timeout\" )); then"
+                          echo "        echo \"Timeout reached. Desired status not achieved.\""
+                          echo "        exit 1"
+                          echo "    fi"
+                          echo "    echo -n \".\""
+                          echo "    sleep 5"
+                          echo "done"
+                          echo "echo \"\""
+                          echo "echo -e \"Approve \e[92m${namespace}/\${ipref}\e[0m to continue Operator upgrade...\""
+                          echo ""
+                      done
+                  fi
+
+                  if [[ "${option}" == 'p' || "${option}" == 'u' ]]; then
+                      if [[ "${option}" == 'p' ]]; then
+                          header_text "Subscriptions referencing unapproved 4.14 InstallPlans: \n"
+                      fi
+                      if [[ "${#patch[@]}" > 0 ]]; then
+                          for item in "${patch[@]}"; do
+                              IFS=' ' read -r namespace ip name < <(echo "${item}")
+                              echo -e "${namespace} ${name}"
+                          done
+                      else
+                          highlight "0 found"
+                      fi
+                      if [[ "${option}" == 'p' ]]; then
+                          echo ""
+                      fi
+                  fi
+
+                  if [[ "${option}" == 'p' || "${option}" == 'r' ]]; then
+                      if [[ "${option}" == 'p' ]]; then
+                          header_text "Subscriptions for Operators that need reinstall: \n"
+                      fi
+                      if [[ "${#reinstall[@]}" > 0 ]]; then
+                          for item in "${reinstall[@]}"; do
+                              IFS=' ' read -r namespace name < <(echo "${item}")
+                              echo -e "${namespace} ${name}"
+                              if [[ "$name" == "openshift-gitops-operator" ]]; then
+                                oc delete csv -n openshift-operators -l olm.copiedFrom=openshift-gitops-operator --dry-run=client
+                                oc delete sub -n ${namespace} ${name} --dry-run=client
+                                oc apply -f /tmp/gitops-subscription.yaml --dry-run=client
+                              elif [[ "$name" == "portworx-certified" ]]; then
+                                oc delete csv -n openshift-operators -l operators.coreos.com/portworx-certified.openshift-operators="" --dry-run=client
+                                oc delete sub -n ${namespace} ${name} --dry-run=client
+                                oc apply -f /tmp/portworx-subscription.yaml --dry-run=client
+                              elif [[ "$name" == "kubevirt-hyperconverged" ]]; then
+                                oc delete csv -n openshift-cnv -l operators.coreos.com/kubevirt-hyperconverged.openshift-cnv="" --dry-run=client
+                                oc delete sub -n ${namespace} ${name} --dry-run=client
+                                oc apply -f /tmp/kubevirt-subscription.yaml --dry-run=client
+                              else
+                                ### TODO: You can customize this section and delete additional csvs and subscriptions as needed; for now we'll skip others
+                                echo -e "Skip deleting ${name} in ${namespace} namespace - TODO: you can update this script to delete this CSV and subscription"
+                              fi
+                              echo -e ""
+                          done
+                      else
+                          highlight "0 found"
+                      fi
+                      if [[ "${option}" == 'p' ]]; then
+                          echo ""
+                      fi
+                  fi
+
+                  if [[ "${option}" == 'p' || "${option}" == 'o' ]]; then
+                      if [[ "${option}" == 'p' ]]; then
+                          header_text "Orphan InstallPlans: \n"
+                      fi
+                      if [[ "${#orphan[@]}" > 0 ]]; then
+                          for item in "${orphan[@]}"; do
+                              IFS=' ' read -r namespace name < <(echo "${item}")
+                              echo -e "${namespace} ${name}"
+                          done
+                      else
+                          highlight "0 found"
+                      fi
+                      if [[ "${option}" == 'p' ]]; then
+                          echo ""
+                      fi
+                  fi
+              }
+
+              main "-p"; # sleep 6000;
+          volumeMounts:
+            - name: subscriptions
+              mountPath: /tmp/kubevirt-subscription.yaml
+              subPath: kubevirt-subscription.yaml
+            - name: subscriptions
+              mountPath: /tmp/gitops-subscription.yaml
+              subPath: gitops-subscription.yaml
+            - name: subscriptions
+              mountPath: /tmp/portworx-subscription.yaml
+              subPath: portworx-subscription.yaml
+      volumes:
+        - name: subscriptions
+          configMap:
+            name: subscriptions
