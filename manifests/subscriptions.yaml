@@ -18,7 +18,7 @@ data:
       name: kubevirt-hyperconverged
       source: redhat-operators
       sourceNamespace: openshift-marketplace
-      startingCSV: kubevirt-hyperconverged-operator.v4.15.5
+      startingCSV: kubevirt-hyperconverged-operator.v4.14.12
   gitops-subscription.yaml: |
     apiVersion: operators.coreos.com/v1alpha1
     kind: Subscription
@@ -28,12 +28,18 @@ data:
       name: openshift-gitops-operator
       namespace: openshift-gitops-operator
     spec:
-      channel: latest
+      channel: gitops-1.10
+      config:
+        env:
+          - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+            value: 'openshift-gitops, gitops'
+          - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
+            value: 'true'
       installPlanApproval: Manual
       name: openshift-gitops-operator
       source: redhat-operators
       sourceNamespace: openshift-marketplace
-      startingCSV: openshift-gitops-operator.v1.10.0
+      startingCSV: openshift-gitops-operator.v1.10.6
   portworx-subscription.yaml: |
     apiVersion: operators.coreos.com/v1alpha1
     kind: Subscription
@@ -48,4 +54,4 @@ data:
       name: portworx-certified
       source: certified-operators
       sourceNamespace: openshift-marketplace
-      startingCSV: portworx-operator.v24.2.0
+      startingCSV: portworx-operator.v24.1.1

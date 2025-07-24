@@ -121,42 +121,42 @@ spec:
               OLM_NAMESPACE="openshift-operator-lifecycle-manager"
 
               main() {
-                  local option=''
+                  local option='p' # hardcode option to probe cluster
 
-                  if [[ $# -eq 0 ]]; then
-                      usage
-                      exit 1
-                  fi
+                #   if [[ $# -eq 0 ]]; then
+                #       usage
+                #       exit 1
+                #   fi
 
-                  # Parse command-line arguments
-                  while getopts ":hpgoru" opt; do
-                      case ${opt} in
-                      h)
-                          usage
-                          exit 0
-                          ;;
-                      o)
-                          option='o'
-                          ;;
-                      r)
-                          option='r'
-                          ;;
-                      u)
-                          option='u'
-                          ;;
-                      p)
-                          option='p'
-                          ;;
-                      g)
-                          option='g'
-                          ;;
-                      \?)
-                          echo "Invalid option: -$OPTARG" >&2
-                          usage
-                          exit 1
-                          ;;
-                      esac
-                  done
+                #   # Parse command-line arguments
+                #   while getopts ":hpgoru" opt; do
+                #       case ${opt} in
+                #       h)
+                #           usage
+                #           exit 0
+                #           ;;
+                #       o)
+                #           option='o'
+                #           ;;
+                #       r)
+                #           option='r'
+                #           ;;
+                #       u)
+                #           option='u'
+                #           ;;
+                #       p)
+                #           option='p'
+                #           ;;
+                #       g)
+                #           option='g'
+                #           ;;
+                #       \?)
+                #           echo "Invalid option: -$OPTARG" >&2
+                #           usage
+                #           exit 1
+                #           ;;
+                #       esac
+                #   done
 
                   check_for_commands
 
@@ -386,7 +386,7 @@ spec:
                   fi
               }
 
-              main "-p"; # sleep 6000;
+              while true; do echo `date`; main; sleep 60; done;
           volumeMounts:
             - name: subscriptions
               mountPath: /tmp/kubevirt-subscription.yaml
