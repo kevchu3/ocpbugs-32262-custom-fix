@@ -347,16 +347,20 @@ spec:
 
                               if [[ "$name" == "openshift-gitops-operator" ]]; then
                                 # Find current CSV from subscription and store in manifest
-                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
                                 cp /tmp/gitops-subscription.yaml /work/gitops-subscription.yaml
+                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
                                 sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/gitops-subscription.yaml
+                                CURRENTCHANNEL=`oc get sub -n ${namespace} ${name} -o jsonpath='{.spec.channel}'`
+                                sed -i "s/^    channel:.*$/  channel: $CURRENTCHANNEL/" /work/gitops-subscription.yaml
                                 oc delete csv -n openshift-operators -l olm.copiedFrom=openshift-gitops-operator --dry-run=client
                                 oc delete sub -n ${namespace} ${name} --dry-run=client
                                 oc apply -f /work/gitops-subscription.yaml --dry-run=client
                               elif [[ "$name" == "portworx-certified" ]]; then
-                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
                                 cp /tmp/portworx-subscription.yaml /work/portworx-subscription.yaml
+                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
                                 sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/portworx-subscription.yaml
+                                CURRENTCHANNEL=`oc get sub -n ${namespace} ${name} -o jsonpath='{.spec.channel}'`
+                                sed -i "s/^    channel:.*$/  channel: $CURRENTCHANNEL/" /work/portworx-subscription.yaml
                                 oc delete csv -n openshift-operators -l operators.coreos.com/portworx-certified.openshift-operators="" --dry-run=client
                                 oc delete sub -n ${namespace} ${name} --dry-run=client
                                 oc apply -f /tmp/portworx-subscription.yaml --dry-run=client
