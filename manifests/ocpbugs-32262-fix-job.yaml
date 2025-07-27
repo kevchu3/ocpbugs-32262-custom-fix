@@ -345,31 +345,31 @@ spec:
 
                               #### Insert custom recovery logic here ####
 
-                              if [[ "$name" == "openshift-gitops-operator" ]]; then
-                                # Find current CSV from subscription and store in manifest
-                                cp /tmp/gitops-subscription.yaml /work/gitops-subscription.yaml
-                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
-                                sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/gitops-subscription.yaml
-                                CURRENTCHANNEL=`oc get sub -n ${namespace} ${name} -o jsonpath='{.spec.channel}'`
-                                sed -i "s/^    channel:.*$/  channel: $CURRENTCHANNEL/" /work/gitops-subscription.yaml
-                                oc delete csv -n ${namespace} -l olm.copiedFrom=openshift-gitops-operator --dry-run=client
-                                oc delete sub -n ${namespace} ${name} --dry-run=client
-                                oc apply -f /work/gitops-subscription.yaml --dry-run=client
-                              elif [[ "$name" == "portworx-certified" ]]; then
-                                cp /tmp/portworx-subscription.yaml /work/portworx-subscription.yaml
-                                CURRENTCSV=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
-                                sed -i "s/^  startingCSV:.*$/  startingCSV: $CURRENTCSV/" /work/portworx-subscription.yaml
-                                CURRENTCHANNEL=`oc get sub -n ${namespace} ${name} -o jsonpath='{.spec.channel}'`
-                                sed -i "s/^    channel:.*$/  channel: $CURRENTCHANNEL/" /work/portworx-subscription.yaml
-                                oc delete csv -n ${namespace} -l operators.coreos.com/portworx-certified.openshift-operators="" --dry-run=client
-                                oc delete sub -n ${namespace} ${name} --dry-run=client
-                                oc apply -f /tmp/portworx-subscription.yaml --dry-run=client
-                              elif [[ "$name" == "kubevirt-hyperconverged" ]]; then
-                                oc delete csv -n ${namespace} -l operators.coreos.com/kubevirt-hyperconverged.openshift-cnv="" --dry-run=client
-                                # We didn't need to delete the subscription from OpenShift Virt to recover so we skipped it
+                              # if DRYRUN=true, then print but don't execute against cluster
+                              DRYRUN=true
+
+                              dryrun_args="--dry-run=client"
+                              if [[ "${DRYRUN}" == 'false' ]]; then
+                                  dryrun_args=""
+                              fi
+
+                              if [[ "$name" == "kubevirt-hyperconverged" ]]; then
+                                  oc delete csv -n ${namespace} -l operators.coreos.com/kubevirt-hyperconverged.openshift-cnv="" ${dryrun_args}
+                                  # We didn't need to delete the subscription from OpenShift Virt to recover so we skipped it
                               else
-                                ### TODO: You can customize this section and delete additional csvs and subscriptions as needed; for now we'll skip others
-                                echo -e "Skip deleting ${name} in ${namespace} namespace - TODO: you can update this script to delete this CSV and subscription"
+                                  oc get sub -n ${namespace} ${name} -o yaml | sed -n '/status:/q;p' | sed '/^  \(creationTimestamp\|generation\|resourceVersion\|uid\): /d' > /work/subscription.yaml
+                                  # Find current CSV from subscription and store in manifest
+                                  currentcsv=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
+                                  sed -i "s/^  startingCSV:.*$/  startingCSV: $currentcsv/" /work/subscription.yaml
+                                
+                                  # execute recovery steps in https://access.redhat.com/solutions/7112405
+                                  label=`oc get sub ${name} -n ${namespace} -o jsonpath='{.metadata.labels}' | jq -r 'keys[]' | grep 'operators.coreos.com'`
+                                  echo "Subscription manifest to reapply:"
+                                  cat /work/subscription.yaml
+                                  echo ""
+                                  oc delete csv -n ${namespace} -l ${label} ${dryrun_args}
+                                  oc delete sub -n ${namespace} ${name} ${dryrun_args}
+                                  oc apply -f /work/subscription.yaml ${dryrun_args}
                               fi
                               echo -e ""
                           done
@@ -401,19 +401,13 @@ spec:
 
               # Check for bug condition on a loop
               while true; do echo `date`; main; sleep 60; done;
+
+              # Check for bug condition once
+              # echo `date`; main;
           volumeMounts:
-            - name: subscriptions
-              mountPath: /tmp/gitops-subscription.yaml
-              subPath: gitops-subscription.yaml
-            - name: subscriptions
-              mountPath: /tmp/portworx-subscription.yaml
-              subPath: portworx-subscription.yaml
             - name: work-dir
               mountPath: /work
       volumes:
-        - name: subscriptions
-          configMap:
-            name: subscriptions
         - name: work-dir
           emptyDir:
             sizeLimit: 100Mi
