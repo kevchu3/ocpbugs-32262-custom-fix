@@ -9,7 +9,7 @@ After cluster is upgraded from 4.14.y to 4.15.z, when the operator approval plan
 
 ## Setup
 
-NOTE: For the purposes of this fix, I've only created this solution to handle ClusterServiceVersions for the OpenShift Virtualization, OpenShift GitOps, and Portworx operators.  Feel free to customize additional operators as needed.
+NOTE: As a customization of this fix, I skipped recovery steps for the OpenShift Virtualization operator only.  Feel free to remove this customization so that this fix will apply to all operators.
 
 This custom fix is intended to automate the resolution of this bug as described in the Red Hat Knowledgebase solutions, so that it can be deployed via GitOps.
 

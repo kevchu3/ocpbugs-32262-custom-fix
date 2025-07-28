@@ -353,10 +353,8 @@ spec:
                                   dryrun_args=""
                               fi
 
-                              if [[ "$name" == "kubevirt-hyperconverged" ]]; then
-                                  oc delete csv -n ${namespace} -l operators.coreos.com/kubevirt-hyperconverged.openshift-cnv="" ${dryrun_args}
-                                  # We didn't need to delete the subscription from OpenShift Virt to recover so we skipped it
-                              else
+                              # We customized these steps and will skip cleaning up OpenShift Virt
+                              if [[ "$name" != "kubevirt-hyperconverged" ]]; then
                                   oc get sub -n ${namespace} ${name} -o yaml | sed -n '/status:/q;p' | sed '/^  \(creationTimestamp\|generation\|resourceVersion\|uid\): /d' > /work/subscription.yaml
                                   # Find current CSV from subscription and store in manifest
                                   currentcsv=`oc get sub -n ${namespace} ${name} -o jsonpath='{.status.currentCSV}'`
